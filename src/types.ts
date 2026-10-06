@@ -104,6 +104,46 @@ export interface RGBColor {
   b: number;
 }
 
+// Screen group types
+export interface ScreenGroupInfo {
+  groupID: string;
+  name?: string;
+  screens: Array<{ screenID: string; screenName: string; canvasIDs: number[] }>;
+}
+
+// Group command behaviour
+export interface GroupCommandOptions {
+  /**
+   * Read the value back after sending and throw when a controller did not apply it
+   * (default true). Silent no-ops are the normal failure mode of COEX.
+   */
+  verify?: boolean;
+  /** How long to wait for the change to become visible when verifying (default 1000ms). */
+  timeoutMs?: number;
+}
+
+// Multi-screen brightness entry (multi/brightness endpoint, as sent by VMP)
+export interface MultiScreenBrightness {
+  screenID: string;
+  /** Brightness in percent (0-100). Ignored when nit is given. */
+  brightness?: number;
+  /** Absolute brightness in nits. */
+  nit?: number;
+  /** Cabinets to apply to; empty or omitted means every cabinet of the screen. */
+  cabinetIDs?: number[];
+  /** Relative brightness switch, passed through as ratioCol (VMP sends false). */
+  ratioCol?: boolean;
+  /** Base value for relative brightness (VMP sends 0). */
+  brightnessBaseValue?: number;
+}
+
+// Color gamut types
+export interface GamutInfo {
+  screenId: string;
+  currentGamutName: string;
+  names: string[];
+}
+
 // Screen output types
 export interface ScreenOutputData {
   screenId: string;

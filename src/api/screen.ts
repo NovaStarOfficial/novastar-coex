@@ -1,5 +1,13 @@
 import ky from "ky";
-import type { ApiResponse, RGBColor, LayerSource, CanvasConfig } from "../types.js";
+import type {
+  ApiResponse,
+  RGBColor,
+  LayerSource,
+  CanvasConfig,
+  ScreenGroupInfo,
+  GamutInfo,
+  MultiScreenBrightness,
+} from "../types.js";
 
 export interface ScreenApi {
   // Screen info and properties
@@ -7,25 +15,30 @@ export interface ScreenApi {
   getScreenProperties: () => Promise<unknown>;
   getCabinetCount: () => Promise<unknown>;
 
+  // Screen groups (screens sharing a screenGroupID, possibly across devices)
+  getScreenGroups: () => Promise<ScreenGroupInfo[]>;
+
   // Display modes
-  displaymode: (value: number, canvasIDs?: number[]) => Promise<void>;
+  displaymode: (value: number, screenIdList?: string[]) => Promise<void>;
   getDisplayState: () => Promise<unknown>;
   getDisplayParams: () => Promise<unknown>;
 
-  // Brightness
-  brightness: (brightness: number, screenIds?: string[]) => Promise<void>;
+  // Brightness (percent, matching the rest of the API; the device takes 0-1)
+  brightness: (brightness: number, screenIdList?: string[]) => Promise<void>;
   screenbrightness: (brightness: number, screenIds: string[]) => Promise<void>;
 
   // Color temperature
-  colortemperature: (colorTemp: number, screenIds?: string[]) => Promise<void>;
+  colortemperature: (colorTemp: number, screenIdList?: string[]) => Promise<void>;
 
   // Gamma
-  gamma: (gamma: number, screenIds?: string[]) => Promise<void>;
+  gamma: (gamma: number, screenIdList?: string[]) => Promise<void>;
   setCustomGamma: (screenId: string, gammaTable: number[]) => Promise<void>;
 
   // Image/Output
   setCustomGamut: (screenIdList: string[], gamutData: RGBColor) => Promise<void>;
-  switchColorGamut: (screenIdList: string[], gamutType: number) => Promise<void>;
+  switchColorGamut: (screenIdList: string[], gamutName: string) => Promise<void>;
+  getGamutList: () => Promise<GamutInfo[]>;
+  setMultiBrightness: (screens: MultiScreenBrightness[]) => Promise<void>;
   setBrightnessLimitOnOff: (state: boolean, screenIdList: string[]) => Promise<void>;
   setBrightnessLimitValue: (
     screenIdList: string[],
@@ -70,7 +83,7 @@ export function createScreenApi(
 ): ScreenApi {
   const { baseurl } = instance;
 
-  return {
+  const screenApi: ScreenApi = {
     // Screen info and properties
     screen: async () => {
       const data = await ky.get(`${baseurl}/api/v1/screen`).json();
@@ -87,11 +100,55 @@ export function createScreenApi(
       return responseparser(data);
     },
 
+    // Screen groups - screens sharing a screenGroupID (a group may span devices,
+    // so a group only ever contains the screens of the queried controller).
+    // Group names come from the screenGroups list of GET /api/v1/screen.
+    getScreenGroups: async () => {
+      const data = await ky.get(`${baseurl}/api/v1/screen`).json();
+      const payload = (await responseparser(data, "data")) as
+        | {
+            screens?: Array<{
+              screenID: string;
+              screenName?: string;
+              screenGroupID?: string;
+              canvases?: Array<{ canvasID?: number }>;
+            }>;
+            screenGroups?: Array<{ screenGroupID?: string; name?: string }>;
+          }
+        | undefined;
+      if (!Array.isArray(payload?.screens)) {
+        throw new Error("Failed to retrieve screen list");
+      }
+
+      const names: Record<string, string> = {};
+      for (const group of payload.screenGroups ?? []) {
+        if (group?.screenGroupID) names[group.screenGroupID] = group.name ?? "";
+      }
+
+      const groups: Record<string, ScreenGroupInfo> = {};
+      for (const screen of payload.screens) {
+        const groupID = screen.screenGroupID ?? "";
+        groups[groupID] ??= {
+          groupID,
+          ...(groupID in names ? { name: names[groupID] } : {}),
+          screens: [],
+        };
+        groups[groupID].screens.push({
+          screenID: screen.screenID,
+          screenName: screen.screenName ?? "",
+          canvasIDs: (screen.canvases ?? [])
+            .map((canvas) => canvas?.canvasID)
+            .filter((id): id is number => typeof id === "number"),
+        });
+      }
+      return Object.values(groups);
+    },
+
     // Display modes
-    displaymode: async (value: number, canvasIDs?: number[]) => {
+    displaymode: async (value: number, screenIdList?: string[]) => {
       const data = await ky
         .put(`${baseurl}/api/v1/screen/output/displaymode`, {
-          json: { value, canvasIDs },
+          json: { value, screenIdList: screenIdList ?? [] },
         })
         .json();
       await responseparser(data);
@@ -108,13 +165,14 @@ export function createScreenApi(
     },
 
     // Brightness
-    brightness: async (brightness: number, screenIds?: string[]) => {
+    brightness: async (brightness: number, screenIdList?: string[]) => {
       if (typeof brightness !== "number" || brightness < 0 || brightness > 100) {
         throw new Error("brightness must be between 0 and 100");
       }
       const data = await ky
         .put(`${baseurl}/api/v1/screen/brightness`, {
-          json: { brightness, screenIds },
+          // The controller takes a 0-1 float, the library speaks percent
+          json: { screenIdList: screenIdList ?? [], brightness: brightness / 100 },
         })
         .json();
       await responseparser(data);
@@ -124,35 +182,30 @@ export function createScreenApi(
       if (!Array.isArray(screenIds) || screenIds.length === 0) {
         throw new Error("screenIds must be a non-empty array");
       }
-      const data = await ky
-        .put(`${baseurl}/api/v1/screen/brightness`, {
-          json: { brightness, screenIds },
-        })
-        .json();
-      await responseparser(data);
+      await screenApi.brightness(brightness, screenIds);
     },
 
     // Color temperature
-    colortemperature: async (colorTemp: number, screenIds?: string[]) => {
-      if (typeof colorTemp !== "number" || colorTemp < 1000 || colorTemp > 12000) {
-        throw new Error("colorTemp must be between 1000 and 12000");
+    colortemperature: async (colorTemp: number, screenIdList?: string[]) => {
+      if (typeof colorTemp !== "number" || colorTemp < 1700 || colorTemp > 15000) {
+        throw new Error("colorTemp must be between 1700 and 15000");
       }
       const data = await ky
         .put(`${baseurl}/api/v1/screen/colortemperature`, {
-          json: { colorTemp, screenIds },
+          json: { screenIdList: screenIdList ?? [], colorTemperature: colorTemp },
         })
         .json();
       await responseparser(data);
     },
 
     // Gamma
-    gamma: async (gamma: number, screenIds?: string[]) => {
+    gamma: async (gamma: number, screenIdList?: string[]) => {
       if (typeof gamma !== "number" || gamma < 1.0 || gamma > 4.0) {
         throw new Error("gamma must be between 1.0 and 4.0");
       }
       const data = await ky
         .put(`${baseurl}/api/v1/screen/gamma`, {
-          json: { gamma, screenIds },
+          json: { screenIdList: screenIdList ?? [], gamma },
         })
         .json();
       await responseparser(data);
@@ -186,17 +239,78 @@ export function createScreenApi(
       await responseparser(data);
     },
 
-    switchColorGamut: async (screenIdList: string[], gamutType: number) => {
+    switchColorGamut: async (screenIdList: string[], gamutName: string) => {
       if (!Array.isArray(screenIdList) || screenIdList.length === 0) {
         throw new Error("screenIdList must be a non-empty array");
       }
-      if (typeof gamutType !== "number" || gamutType < 0) {
-        throw new Error("gamutType must be a non-negative number");
+      if (typeof gamutName !== "string" || gamutName.length === 0) {
+        throw new Error("gamutName must be a non-empty string, e.g. from getGamutList()");
       }
       const data = await ky
         .put(`${baseurl}/api/v1/screen/output/gamut`, {
-          json: { screenIdList, gamutType },
+          json: { name: gamutName, screenIdList },
         })
+        .json();
+      await responseparser(data);
+    },
+
+    getGamutList: async () => {
+      const data = await ky.get(`${baseurl}/api/v1/screen/output`).json();
+      const outputs = (await responseparser(data, "data")) as
+        | Array<{
+            screenId?: string;
+            gamutList?: {
+              currentGamutName?: string;
+              colorGamutInfoList?: Array<{ colorGamutInfo?: { targetGamut?: { name?: string } } }>;
+            };
+          }>
+        | undefined;
+      if (!Array.isArray(outputs)) {
+        throw new Error("Failed to retrieve screen output data");
+      }
+      return outputs.map((output) => ({
+        screenId: output.screenId ?? "",
+        currentGamutName: output.gamutList?.currentGamutName ?? "",
+        names: (output.gamutList?.colorGamutInfoList ?? [])
+          .map((entry) => entry.colorGamutInfo?.targetGamut?.name)
+          .filter((name): name is string => Boolean(name)),
+      }));
+    },
+
+    // Multi-screen brightness - the shape VMP's own clients send. Only screens of
+    // this controller can be addressed; other screen IDs are accepted and ignored.
+    setMultiBrightness: async (screens: MultiScreenBrightness[]) => {
+      if (!Array.isArray(screens) || screens.length === 0) {
+        throw new Error("screens must be a non-empty array");
+      }
+      const screenBrightnessInfo = screens.map((screen) => {
+        if (typeof screen.screenID !== "string" || screen.screenID.length === 0) {
+          throw new Error("screenID must be a non-empty string");
+        }
+        const nit = screen.nit ?? 0;
+        if (screen.brightness === undefined && nit <= 0) {
+          throw new Error("each screen needs brightness (percent) or nit");
+        }
+        if (screen.brightness !== undefined && (screen.brightness < 0 || screen.brightness > 100)) {
+          throw new Error("brightness must be between 0 and 100");
+        }
+        const ratio = nit > 0 ? 0 : (screen.brightness ?? 0) / 100;
+        return {
+          screenID: screen.screenID,
+          ratio,
+          nit,
+          cabinetParam: {
+            idList: screen.cabinetIDs ?? [],
+            ratio,
+            nit,
+            brightnessBaseValue: screen.brightnessBaseValue ?? 0,
+            ratioCol: screen.ratioCol ?? false,
+          },
+        };
+      });
+
+      const data = await ky
+        .post(`${baseurl}/api/v1/screen/multi/brightness`, { json: { screenBrightnessInfo } })
         .json();
       await responseparser(data);
     },
@@ -463,4 +577,6 @@ export function createScreenApi(
       return responseparser(data);
     },
   };
+
+  return screenApi;
 }

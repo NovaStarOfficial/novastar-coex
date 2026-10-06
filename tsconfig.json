@@ -13,7 +13,7 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "ES2024.Promise"],
     "types": ["node"]
   },
   "include": ["src/**/*"],

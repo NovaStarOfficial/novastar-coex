@@ -6,8 +6,10 @@ A TypeScript library for controlling NovaStar COEX video wall processors via HTT
 
 - **Full TypeScript support** with strict type checking
 - **Promise-based API** with async/await
+- **Screen group control** (brightness, color temperature, gamut, blackout, freeze) across controllers
+- **Read-back verification** that catches COEX's silent no-ops
 - **Comprehensive input validation** using type guards
-- **142 tests** with 91%+ coverage
+- **169 tests** with 91%+ coverage
 - **MSW 2.x** for API mocking in tests
 
 ## Installation
@@ -15,6 +17,9 @@ A TypeScript library for controlling NovaStar COEX video wall processors via HTT
 ```bash
 npm i @novastar-dev/coex
 ```
+
+Requires Node 22+ (or a browser with `Promise.withResolvers`), which the group
+read-back uses.
 
 ## Quick Start
 
@@ -62,15 +67,61 @@ main();
 | `screen()` | Get screen information |
 | `getScreenProperties()` | Get screen properties |
 | `getCabinetCount()` | Get cabinet count |
-| `displaymode(value)` | Set display mode (0=normal, 1=blackout, 2=freeze) |
-| `brightness(value, screenIds?)` | Set brightness |
-| `colortemperature(value, screenIds?)` | Set color temperature (1000-12000K) |
-| `gamma(value, screenIds?)` | Set gamma (1.0-4.0) |
+| `getScreenGroups()` | List screen groups (screens sharing a `screenGroupID`) |
+| `displaymode(value, screenIdList?)` | Set display mode (0=normal, 1=blackout, 2=freeze), empty list = all screens |
+| `brightness(value, screenIdList?)` | Set brightness, 0-100 percent |
+| `screenbrightness(value, screenIds)` | Set brightness for explicit screen IDs |
+| `colortemperature(value, screenIdList?)` | Set color temperature (1700-15000K) |
+| `gamma(value, screenIdList?)` | Set gamma (1.0-4.0) |
+| `switchColorGamut(screenIdList, name)` | Switch color gamut by name (see `getGamutList()`) |
+| `getGamutList()` | List gamut names and the active gamut per screen |
+| `setMultiBrightness(screens)` | Multi-screen brightness (`POST /api/v1/screen/multi/brightness`), the shape VMP sends |
 | `getDisplayState()` | Get display state |
-| `getDisplayParams()` | Get display parameters |
+| `getDisplayParams()` | Get display parameters (device values: brightness is 0-1) |
 | `switchLayerSource(screenId, layers)` | Switch layer source |
 | `setMapping(canvasId, mappingData)` | Set canvas mapping |
 | `getScreenList()` | Get all screens |
+
+### Screen Groups
+
+Screens of one wall can be grouped in VMP; the group ID is published as `screenGroupID`
+by `GET /api/v1/screen`. Controllers do not talk to each other, so a group spanning two
+controllers (e.g. two MX40 Pro) is commanded by driving each controller with the screen
+IDs it owns - `ScreenGroup` does that fan-out:
+
+```typescript
+import { COEX, ScreenGroup } from "@novastar-dev/coex";
+
+const wall = new ScreenGroup(
+  [new COEX("192.168.0.11"), new COEX("192.168.0.22")],
+  { groupID: "{c2513ba3-a50a-4e58-811f-95c95ba2b577}" } // omit to address all screens
+);
+
+await wall.screens();          // [{ device, screenID, screenName, canvasIDs }, ...]
+await wall.gamuts();           // available gamut names + active gamut per screen
+
+await wall.brightness(80);     // 0-100 percent
+await wall.colortemperature(6500);
+await wall.gamut("Rec.2020");
+await wall.blackout();
+await wall.freeze();
+await wall.normal();
+```
+
+Each call sends one request per controller, in parallel, carrying only that
+controller's own screen IDs. Afterwards the value is read back from every
+controller and a mismatch throws - COEX answers `Success` even for a screen ID the
+controller does not own and then applies nothing:
+
+```typescript
+await wall.brightness(80);                        // verifies, throws on a silent no-op
+await wall.brightness(80, { verify: false });     // skip the read-back (slider scrubbing)
+await wall.brightness(80, { timeoutMs: 2500 });   // allow slower controllers
+```
+
+Verification tolerances: brightness `±0.02`, color temperature `±1000K` (controllers
+snap to their gamut presets), gamut by name, display mode by canvas. Screens that the
+controller does not report (no cabinets mapped) are skipped.
 
 ### Preset API
 
@@ -143,14 +194,33 @@ The library exports all relevant types:
 ```typescript
 import {
   COEX,
+  ScreenGroup,
   createCoexApi,
   type Screen,
   type Cabinet,
   type Preset,
   type InputSource,
+  type ScreenGroupInfo,
   type ApiResponse,
 } from "@novastar-dev/coex";
 ```
+
+## Upgrading from 2.x
+
+Screen-level commands used to send payload keys the controllers ignore (`screenIds`,
+`colorTemp`, `gamutType`, `canvasIDs`), so they answered `Success` and changed nothing.
+3.0.0 sends the keys the controllers act on:
+
+| Method | 2.x payload | 3.x payload |
+|--------|-------------|-------------|
+| `brightness` / `screenbrightness` | `{brightness, screenIds}`, 0-100 | `{screenIdList, brightness}`, 0-100 (sent as the controller's 0-1) |
+| `colortemperature` | `{colorTemp, screenIds}` | `{screenIdList, colorTemperature}`, 1700-15000K |
+| `gamma` | `{gamma, screenIds}` | `{screenIdList, gamma}` |
+| `switchColorGamut` | `{screenIdList, gamutType: number}` | `{name, screenIdList}` - takes a gamut name, see `getGamutList()` |
+| `displaymode` | `{value, canvasIDs}` | `{value, screenIdList}` |
+
+`COEX.brightness()` was reading the screen list from the wrong level of the response
+envelope and always threw; it now resolves the screens of its controller.
 
 ## Testing
 

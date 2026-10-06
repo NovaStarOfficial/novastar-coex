@@ -656,8 +656,8 @@ describe("COEX API Tests", () => {
         await expect(api.displaymode(1)).resolves.toBeUndefined();
       });
 
-      it("should set display mode with canvas IDs", async () => {
-        await expect(api.displaymode(0, [1, 2, 3])).resolves.toBeUndefined();
+      it("should set display mode with screen IDs", async () => {
+        await expect(api.displaymode(0, ["screen1"])).resolves.toBeUndefined();
       });
     });
 
@@ -709,7 +709,7 @@ describe("COEX API Tests", () => {
       });
 
       it("should reject color temperature out of range", async () => {
-        await expect(api.colortemperature(500)).rejects.toThrow("colorTemp must be between 1000 and 12000");
+        await expect(api.colortemperature(500)).rejects.toThrow("colorTemp must be between 1700 and 15000");
       });
     });
 
@@ -741,7 +741,7 @@ describe("COEX API Tests", () => {
 
     describe("switchColorGamut", () => {
       it("should switch color gamut", async () => {
-        await expect(api.switchColorGamut(["screen1"], 1)).resolves.toBeUndefined();
+        await expect(api.switchColorGamut(["screen1"], "Rec.2020")).resolves.toBeUndefined();
       });
     });
 

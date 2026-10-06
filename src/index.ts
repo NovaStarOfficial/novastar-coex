@@ -9,7 +9,19 @@ declare const console: {
 };
 
 // Re-export types
-export type { ApiResponse, Screen, Cabinet, Preset, InputSource } from "./types.js";
+export type {
+  ApiResponse,
+  Screen,
+  Cabinet,
+  Preset,
+  InputSource,
+  ScreenGroupInfo,
+  GamutInfo,
+  GroupCommandOptions,
+  MultiScreenBrightness,
+} from "./types.js";
+export { ScreenGroup } from "./group.js";
+export type { GroupDevice, GroupScreen, ScreenGroupOptions } from "./group.js";
 
 export class COEX {
   private api: ReturnType<typeof createCoexApi>;
@@ -44,18 +56,12 @@ export class COEX {
 
   async brightness(brightnessValue: number): Promise<void> {
     console.log("adjust brightness", brightnessValue);
-    const screenData = await this.api.screen();
-    if (screenData && (screenData as { screens?: unknown[] }).screens) {
-      const screens = (screenData as { screens: Array<{ screenID: string }> }).screens;
-      const screenIds = screens.map((s) => s.screenID);
-      if (screenIds.length > 0) {
-        await this.api.screenbrightness(brightnessValue, screenIds);
-      } else {
-        throw { error: "No screens found to adjust brightness." };
-      }
-    } else {
-      throw { error: "Failed to retrieve screen IDs or invalid response format" };
+    const groups = await this.api.getScreenGroups();
+    const screenIds = groups.flatMap((group) => group.screens.map((screen) => screen.screenID));
+    if (screenIds.length === 0) {
+      throw { error: "No screens found to adjust brightness." };
     }
+    await this.api.brightness(brightnessValue, screenIds);
   }
 
   async input(inputName: string): Promise<{ input: string; groupId: string }> {
