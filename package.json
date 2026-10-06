@@ -17,7 +17,7 @@
   "author": "FaintGhost",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FaintGhost/novastar-coex.git"
+    "url": "git+https://github.com/NovaStarOfficial/novastar-coex.git"
   },
   "type": "module",
   "main": "./dist/index.js",
