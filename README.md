@@ -205,13 +205,13 @@ import {
 } from "@novastar-dev/coex";
 ```
 
-## Upgrading from 2.x
+## Upgrading from 2.0.4
 
 Screen-level commands used to send payload keys the controllers ignore (`screenIds`,
 `colorTemp`, `gamutType`, `canvasIDs`), so they answered `Success` and changed nothing.
-3.0.0 sends the keys the controllers act on:
+2.1.0 sends the keys the controllers act on:
 
-| Method | 2.x payload | 3.x payload |
+| Method | payload up to 2.0.4 | payload in 2.1.0 |
 |--------|-------------|-------------|
 | `brightness` / `screenbrightness` | `{brightness, screenIds}`, 0-100 | `{screenIdList, brightness}`, 0-100 (sent as the controller's 0-1) |
 | `colortemperature` | `{colorTemp, screenIds}` | `{screenIdList, colorTemperature}`, 1700-15000K |
